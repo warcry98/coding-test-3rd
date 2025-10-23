@@ -8,9 +8,13 @@ TODO: Implement the document processing pipeline
 - Handle errors and edge cases
 """
 from typing import Dict, List, Any
+import logging
+import re
 import pdfplumber
 from app.core.config import settings
 from app.services.table_parser import TableParser
+
+logger = logging.getLogger(__name__)
 
 class DocumentProcessor:
     """Process PDF documents and extract structured data"""
@@ -23,8 +27,8 @@ class DocumentProcessor:
         Process a PDF document
         
         TODO: Implement this method
-        - Open PDF with pdfplumber
-        - Extract tables from each page
+        - Open PDF with pdfplumber ✅
+        - Extract tables from each page ✅
         - Parse and classify tables using TableParser
         - Extract text and create chunks
         - Store chunks in vector database
@@ -38,8 +42,58 @@ class DocumentProcessor:
         Returns:
             Processing result with statistics
         """
-        # TODO: Implement PDF processing logic
-        raise NotImplementedError("Document processing not implemented yet")
+
+        result = {
+            "status": "pending",
+            "error": "",
+            "document_id": document_id,
+            "fund_id": fund_id,
+            "page_processed": 0,
+            "tables_extracted": 0,
+            "text_chunks": 0,
+        }
+
+        try:
+            all_text_block = []
+            classified_tables = []
+
+            with pdfplumber.open(file_path) as pdf:
+                for page_idx, page in enumerate(pdf.pages):
+                    tables = page.extract_tables(table_settings={})
+                    for table in tables:
+                        parsed_table = self.table_parser.parse(table)
+                        for parsed_data in parsed_table:
+                            classified_table = self.table_parser.classify(parsed_data)
+                            classified_tables.append({
+                                "page": page_idx,
+                                "type": classified_table,
+                                "data": parsed_data,
+                            })
+                        result["tables_extracted"] += 1
+
+                    text = page.extract_text() or ""
+                    if text.strip():
+                        all_text_block.append({
+                            "page": page_idx,
+                            "content": text.strip(),
+                        })
+                    
+                    result["page_processed"] += 1
+            
+            chunks = self._chunk_text(all_text_block)
+            result["text_chunks"] = len(chunks)
+
+            result["status"] = "completed"
+            logger.info(f"✅ Document {document_id} processed successfully")
+
+        except Exception as e:
+            logger.exception(f"Error processing document {document_id}: {e}")
+            result.update({
+                "status": "failed",
+                "error": str(e)
+            })
+
+        return result
     
     def _chunk_text(self, text_content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -57,5 +111,30 @@ class DocumentProcessor:
         Returns:
             List of text chunks with metadata
         """
-        # TODO: Implement text chunking logic
-        raise NotImplementedError("Text chunking not implemented yet")
+        chunks = []
+
+        for block in text_content:
+            page = block.get("page")
+            content = block.get("content", "").strip()
+            if not content:
+                continue
+
+            raw_chunk = re.split(f'\n{2,}|(?<=[.!?])\s{2,}', content)
+
+            for i, chunk_text in enumerate(raw_chunk, start=1):
+                cleaned = chunk_text.strip()
+                if not cleaned:
+                    continue
+
+                chunks.append({
+                    "page": page,
+                    "chunk_index": i,
+                    "content": cleaned,
+                    "metadata": {
+                        "source": f"page_{page}",
+                        "chunk_no": i,
+                        "char_length": len(cleaned),
+                    }
+                })
+
+        return chunks

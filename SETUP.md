@@ -100,7 +100,7 @@ cp .env.example .env
 # (Install via Homebrew on Mac, apt on Linux, or download for Windows)
 
 # Initialize database
-python app/db/init_db.py
+python app.db.init_db
 
 # Run development server
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000

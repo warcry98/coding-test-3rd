@@ -69,7 +69,7 @@ This repository contains a **project scaffold** to help you get started quickly:
 The following **core functionalities are NOT implemented** and need to be built by you:
 
 #### 1. Document Processing Pipeline (Phase 2) - **CRITICAL**
-- [ ] PDF parsing with pdfplumber (integrate and test)
+- [⌛] PDF parsing with pdfplumber (integrate and test)
 - [ ] Table detection and extraction logic
 - [ ] Intelligent table classification (capital calls vs distributions vs adjustments)
 - [ ] Data validation and cleaning
