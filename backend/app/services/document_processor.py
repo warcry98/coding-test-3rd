@@ -13,6 +13,8 @@ import re
 import pdfplumber
 from app.core.config import settings
 from app.services.table_parser import TableParser
+from app.models.document import Document
+from app.models.fund import Fund
 
 logger = logging.getLogger(__name__)
 
@@ -29,8 +31,8 @@ class DocumentProcessor:
         TODO: Implement this method
         - Open PDF with pdfplumber ✅
         - Extract tables from each page ✅
-        - Parse and classify tables using TableParser
-        - Extract text and create chunks
+        - Parse and classify tables using TableParser ✅
+        - Extract text and create chunks ✅
         - Store chunks in vector database
         - Return processing statistics
         
@@ -55,22 +57,14 @@ class DocumentProcessor:
 
         try:
             all_text_block = []
-            classified_tables = []
 
             with pdfplumber.open(file_path) as pdf:
-                for page_idx, page in enumerate(pdf.pages):
-                    tables = page.extract_tables(table_settings={})
-                    for table in tables:
-                        parsed_table = self.table_parser.parse(table)
-                        for parsed_data in parsed_table:
-                            classified_table = self.table_parser.classify(parsed_data)
-                            classified_tables.append({
-                                "page": page_idx,
-                                "type": classified_table,
-                                "data": parsed_data,
-                            })
-                        result["tables_extracted"] += 1
+                parsed_tables = self.table_parser.parse(pdf.pages, fund_id, document_id)
+                for table in parsed_tables["tables"]:
+                    self.table_parser.classify(table, fund_id)
+                    result["tables_extracted"] += 1
 
+                for page_idx, page in enumerate(pdf.pages):
                     text = page.extract_text() or ""
                     if text.strip():
                         all_text_block.append({
@@ -82,6 +76,8 @@ class DocumentProcessor:
             
             chunks = self._chunk_text(all_text_block)
             result["text_chunks"] = len(chunks)
+
+            print(chunks)
 
             result["status"] = "completed"
             logger.info(f"✅ Document {document_id} processed successfully")
