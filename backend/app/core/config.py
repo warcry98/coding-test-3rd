@@ -20,6 +20,7 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3000",
+        "http://192.168.2.217:3000",
     ]
     
     # Database
@@ -51,6 +52,10 @@ class Settings(BaseSettings):
     # RAG
     TOP_K_RESULTS: int = 5
     SIMILARITY_THRESHOLD: float = 0.7
+
+    # llama.cpp models
+    EMBEDDING_MODEL: str = ""
+    RAG_MODEL: str = ""
     
     class Config:
         env_file = ".env"

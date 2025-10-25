@@ -70,9 +70,9 @@ The following **core functionalities are NOT implemented** and need to be built 
 
 #### 1. Document Processing Pipeline (Phase 2) - **CRITICAL**
 - [⌛] PDF parsing with pdfplumber (integrate and test)
-- [ ] Table detection and extraction logic
-- [ ] Intelligent table classification (capital calls vs distributions vs adjustments)
-- [ ] Data validation and cleaning
+- [✅] Table detection and extraction logic
+- [✅] Intelligent table classification (capital calls vs distributions vs adjustments)
+- [✅] Data validation and cleaning
 - [ ] Error handling for malformed PDFs
 - [ ] Background task processing (Celery integration)
 
@@ -81,8 +81,8 @@ The following **core functionalities are NOT implemented** and need to be built 
 - `backend/app/services/table_parser.py` (needs implementation)
 
 #### 2. Vector Store & RAG System (Phase 3) - **CRITICAL**
-- [ ] Text chunking strategy implementation
-- [ ] embedding generation
+- [✅] Text chunking strategy implementation
+- [✅] embedding generation
 - [ ] FAISS index creation and management
 - [ ] Semantic search implementation
 - [ ] Context retrieval for LLM

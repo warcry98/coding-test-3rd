@@ -25,6 +25,7 @@ langchain-openai==0.0.2
 langchain-community==0.0.10
 openai==1.7.2
 anthropic==0.8.1
+llama-cpp-python==0.3.16
 
 # Vector Store (using pgvector - PostgreSQL extension)
 # No additional packages needed - pgvector is a PostgreSQL extension

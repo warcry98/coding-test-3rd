@@ -6,6 +6,7 @@ import time
 from langchain_openai import ChatOpenAI
 from langchain_community.llms import Ollama
 from langchain.prompts import ChatPromptTemplate
+from llama_cpp import Llama
 from app.core.config import settings
 from app.services.vector_store import VectorStore
 from app.services.metrics_calculator import MetricsCalculator
@@ -23,15 +24,11 @@ class QueryEngine:
     
     def _initialize_llm(self):
         """Initialize LLM"""
-        if settings.OPENAI_API_KEY:
-            return ChatOpenAI(
-                model=settings.OPENAI_MODEL,
-                temperature=0,
-                openai_api_key=settings.OPENAI_API_KEY
-            )
-        else:
-            # Fallback to local LLM
-            return Ollama(model="llama2")
+        return Llama(
+            model_path=settings.RAG_MODEL,
+            verbose=False,
+            n_ctx=2048,
+        )
     
     async def process_query(
         self, 
@@ -137,7 +134,7 @@ class QueryEngine:
         metrics: Optional[Dict[str, Any]],
         conversation_history: List[Dict[str, str]]
     ) -> str:
-        """Generate response using LLM"""
+        """Generate response using LLM (llama_cpp)"""
         
         # Build context string
         context_str = "\n\n".join([
@@ -160,46 +157,47 @@ class QueryEngine:
             for msg in conversation_history[-3:]:  # Last 3 messages
                 history_str += f"{msg['role']}: {msg['content']}\n"
         
-        # Create prompt
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", """You are a financial analyst assistant specializing in private equity fund performance.
+        system_content = (
+            "You are a financial analyst assistant specializing in private equity fund performance.\n\n"
+            "Your role:\n"
+            "- Answer questions about fund performance using provided context\n"
+            "- Calculate metrics like DPI, IRR when asked\n"
+            "- Explain complex financial terms in simple language\n"
+            "- Always cite your sources from the provided documents\n\n"
+            "When calculating:\n"
+            "- Use the provided metrics data\n"
+            "- Show your work step-by-step\n"
+            "- Explain any assumptions made\n\n"
+            "Format your responses:\n"
+            "- Be concise but thorough\n"
+            "- Use bullet points for lists\n"
+            "- Bold important numbers using **number**\n"
+            "- Provide context for metrics"
+        )
 
-Your role:
-- Answer questions about fund performance using provided context
-- Calculate metrics like DPI, IRR when asked
-- Explain complex financial terms in simple language
-- Always cite your sources from the provided documents
-
-When calculating:
-- Use the provided metrics data
-- Show your work step-by-step
-- Explain any assumptions made
-
-Format your responses:
-- Be concise but thorough
-- Use bullet points for lists
-- Bold important numbers using **number**
-- Provide context for metrics"""),
-            ("user", """Context from documents:
-{context}
-{metrics}
-{history}
-
-Question: {query}
-
-Please provide a helpful answer based on the context and metrics provided.""")
-        ])
-        
-        # Generate response
-        messages = prompt.format_messages(
-            context=context_str,
-            metrics=metrics_str,
-            history=history_str,
-            query=query
+        user_content = (
+            f"Context from documents:\n{context_str}"
+            f"{metrics_str}"
+            f"{history_str}\n\n"
+            f"Question: {query}\n\n"
+            "Please provide a helpful answer based on the context and metrics provided. "
+            "Cite source numbers like [Source 1], [Source 2] where relevant."
         )
         
+        # Generate response
+        messages = [
+            {"role": "system", "content": system_content},
+            {"role": "user", "content": user_content},
+        ]
+
+        print(messages)
+        
         try:
-            response = self.llm.invoke(messages)
+            response = self.llm.create_chat_completion(
+                messages=messages,
+                max_tokens=768,
+            )
+            print(response)
             if hasattr(response, 'content'):
                 return response.content
             return str(response)

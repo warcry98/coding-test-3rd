@@ -7,7 +7,9 @@ TODO: Implement vector storage using pgvector
 - Implement similarity search using pgvector operators
 - Handle metadata filtering
 """
+import json
 from typing import List, Dict, Any, Optional
+from llama_cpp import Llama
 import numpy as np
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -27,16 +29,7 @@ class VectorStore:
     
     def _initialize_embeddings(self):
         """Initialize embedding model"""
-        if settings.OPENAI_API_KEY:
-            return OpenAIEmbeddings(
-                model=settings.OPENAI_EMBEDDING_MODEL,
-                openai_api_key=settings.OPENAI_API_KEY
-            )
-        else:
-            # Fallback to local embeddings
-            return HuggingFaceEmbeddings(
-                model_name="sentence-transformers/all-MiniLM-L6-v2"
-            )
+        return Llama(model_path=settings.EMBEDDING_MODEL, n_ctx=2048, embedding=True, verbose=False)
     
     def _ensure_extension(self):
         """
@@ -52,7 +45,7 @@ class VectorStore:
             
             # Create embeddings table
             # Dimension: 1536 for OpenAI, 384 for sentence-transformers
-            dimension = 1536 if settings.OPENAI_API_KEY else 384
+            dimension = 384
             
             create_table_sql = f"""
             CREATE TABLE IF NOT EXISTS document_embeddings (
@@ -93,7 +86,7 @@ class VectorStore:
             # Insert into database
             insert_sql = text("""
                 INSERT INTO document_embeddings (document_id, fund_id, content, embedding, metadata)
-                VALUES (:document_id, :fund_id, :content, :embedding::vector, :metadata::jsonb)
+                VALUES (:document_id, :fund_id, :content, CAST(:embedding AS vector), CAST(:metadata AS jsonb))
             """)
             
             self.db.execute(insert_sql, {
@@ -101,7 +94,7 @@ class VectorStore:
                 "fund_id": metadata.get("fund_id"),
                 "content": content,
                 "embedding": str(embedding_list),
-                "metadata": str(metadata)
+                "metadata": json.dumps(metadata)
             })
             self.db.commit()
         except Exception as e:
@@ -134,6 +127,7 @@ class VectorStore:
         """
         try:
             # Generate query embedding
+            print(query)
             query_embedding = await self._get_embedding(query)
             embedding_list = query_embedding.tolist()
             
@@ -155,10 +149,10 @@ class VectorStore:
                     fund_id,
                     content,
                     metadata,
-                    1 - (embedding <=> :query_embedding::vector) as similarity_score
+                    1 - (embedding <=> CAST(:query_embedding AS vector)) as similarity_score
                 FROM document_embeddings
                 {where_clause}
-                ORDER BY embedding <=> :query_embedding::vector
+                ORDER BY embedding <=> CAST(:query_embedding AS vector)
                 LIMIT :k
             """)
             
@@ -166,6 +160,8 @@ class VectorStore:
                 "query_embedding": str(embedding_list),
                 "k": k
             })
+
+            print("result", result.all())
             
             # Format results
             results = []
@@ -186,12 +182,16 @@ class VectorStore:
     
     async def _get_embedding(self, text: str) -> np.ndarray:
         """Generate embedding for text"""
-        if hasattr(self.embeddings, 'embed_query'):
-            embedding = self.embeddings.embed_query(text)
-        else:
-            embedding = self.embeddings.encode(text)
+        prompt = f"query: {text.strip()}"
+
+        embedding = self.embeddings.create_embedding(prompt)
+        vec = np.array(embedding["data"][0]["embedding"], dtype=np.float32)
+
+        norm = np.linalg.norm(vec)
+        if norm > 0:
+            vec = vec / norm
         
-        return np.array(embedding, dtype=np.float32)
+        return vec
     
     def clear(self, fund_id: Optional[int] = None):
         """
