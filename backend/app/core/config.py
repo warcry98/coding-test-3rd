@@ -20,6 +20,7 @@ class Settings(BaseSettings):
         "http://localhost:3000",
         "http://localhost:3001",
         "http://127.0.0.1:3000",
+        "http://192.168.2.217:3000",
     ]
     
     # Database
@@ -30,11 +31,17 @@ class Settings(BaseSettings):
     
     # OpenAI
     OPENAI_API_KEY: str = ""
-    OPENAI_MODEL: str = "gpt-4-turbo-preview"
-    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
+    OPENAI_MODEL: str = ""
+    OPENAI_EMBEDDING_MODEL: str = ""
     
     # Anthropic (optional)
     ANTHROPIC_API_KEY: str = ""
+
+    # ollama
+    LLM_PROVIDER: str = ""
+    OLLAMA_BASE_URL: str = ""
+    OLLAMA_MODEL: str = ""
+    OLLAMA_EMBEDDING_MODEL: str = ""
     
     # Vector Store
     VECTOR_STORE_PATH: str = "./vector_store"
@@ -47,10 +54,26 @@ class Settings(BaseSettings):
     # Document Processing
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
+    MIN_CHUNK_SIZE: int = 100
+    MAX_CHUNK_SIZE: int = 2000
+    
+    # PDF Processing
+    TABLE_CONFIDENCE_THRESHOLD: float = 0.7
+    PDF_TABLE_SETTINGS: dict = {
+        'vertical_strategy': 'text',
+        'horizontal_strategy': 'text',
+        'intersection_x_tolerance': 2,
+        'intersection_y_tolerance': 2,
+        'snap_tolerance': 3,
+        'join_tolerance': 3,
+        'edge_min_length': 3
+    }
     
     # RAG
     TOP_K_RESULTS: int = 5
     SIMILARITY_THRESHOLD: float = 0.7
+    MIN_SIMILARITY_SCORE: float = 0.2
+    MAX_CONTEXT_CHUNKS: int = 10
     
     class Config:
         env_file = ".env"

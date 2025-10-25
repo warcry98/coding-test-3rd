@@ -8,11 +8,12 @@ TODO: Implement vector storage using pgvector
 - Handle metadata filtering
 """
 from typing import List, Dict, Any, Optional
+import json
 import numpy as np
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 from langchain_openai import OpenAIEmbeddings
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings, OllamaEmbeddings
 from app.core.config import settings
 from app.db.session import SessionLocal
 
@@ -27,6 +28,11 @@ class VectorStore:
     
     def _initialize_embeddings(self):
         """Initialize embedding model"""
+        if settings.LLM_PROVIDER == "ollama":
+            return OllamaEmbeddings(
+                model=settings.OLLAMA_EMBEDDING_MODEL,
+                base_url=settings.OLLAMA_BASE_URL,
+            )
         if settings.OPENAI_API_KEY:
             return OpenAIEmbeddings(
                 model=settings.OPENAI_EMBEDDING_MODEL,
@@ -52,7 +58,7 @@ class VectorStore:
             
             # Create embeddings table
             # Dimension: 1536 for OpenAI, 384 for sentence-transformers
-            dimension = 1536 if settings.OPENAI_API_KEY else 384
+            dimension = 768 if settings.LLM_PROVIDER == "ollama" else 384
             
             create_table_sql = f"""
             CREATE TABLE IF NOT EXISTS document_embeddings (
@@ -93,7 +99,7 @@ class VectorStore:
             # Insert into database
             insert_sql = text("""
                 INSERT INTO document_embeddings (document_id, fund_id, content, embedding, metadata)
-                VALUES (:document_id, :fund_id, :content, :embedding::vector, :metadata::jsonb)
+                VALUES (:document_id, :fund_id, :content, CAST(:embedding AS vector), CAST(:metadata AS jsonb))
             """)
             
             self.db.execute(insert_sql, {
@@ -101,7 +107,7 @@ class VectorStore:
                 "fund_id": metadata.get("fund_id"),
                 "content": content,
                 "embedding": str(embedding_list),
-                "metadata": str(metadata)
+                "metadata": json.dumps(metadata)
             })
             self.db.commit()
         except Exception as e:
@@ -113,58 +119,85 @@ class VectorStore:
         self, 
         query: str, 
         k: int = 5, 
-        filter_metadata: Optional[Dict[str, Any]] = None
+        filter_metadata: Optional[Dict[str, Any]] = None,
+        min_score: float = 0.2
     ) -> List[Dict[str, Any]]:
         """
-        Search for similar documents using cosine similarity
+        Search for similar documents with advanced filtering
         
-        TODO: Implement this method
-        - Generate query embedding
-        - Use pgvector's <=> operator for cosine distance
-        - Apply metadata filters if provided
-        - Return top k results
+        Features:
+        - Cosine similarity search with pgvector
+        - Metadata filtering
+        - Score thresholding
+        - JSON metadata handling
+        - Error recovery
         
         Args:
-            query: Search query
-            k: Number of results to return
-            filter_metadata: Optional metadata filters (e.g., {"fund_id": 1})
+            query: Search query text
+            k: Number of results (default: 5)
+            filter_metadata: Optional filters like {"fund_id": 1}
+            min_score: Minimum similarity score (default: 0.2)
             
         Returns:
-            List of similar documents with scores
+            List of matching documents with scores
         """
         try:
             # Generate query embedding
             query_embedding = await self._get_embedding(query)
             embedding_list = query_embedding.tolist()
             
-            # Build query with optional filters
-            where_clause = ""
+            # Build metadata filters
+            conditions = []
+            params = {
+                "query_embedding": str(embedding_list),
+                "k": k,
+                "min_score": min_score
+            }
+            
             if filter_metadata:
-                conditions = []
                 for key, value in filter_metadata.items():
                     if key in ["document_id", "fund_id"]:
-                        conditions.append(f"{key} = {value}")
-                if conditions:
-                    where_clause = "WHERE " + " AND ".join(conditions)
+                        # Direct column filters
+                        conditions.append(f"{key} = :{key}")
+                        params[key] = value
+                    else:
+                        # JSON metadata filters
+                        conditions.append(
+                            f"metadata->:key = :value::jsonb"
+                        )
+                        params[f"key_{key}"] = key
+                        params[f"value_{key}"] = json.dumps(value)
+                        
+            where_clause = "WHERE 1 - (embedding <=> CAST(:query_embedding AS vector)) >= :min_score"
+            if conditions:
+                where_clause += " AND " + " AND ".join(conditions)
             
-            # Search using cosine distance (<=> operator)
+            # Optimized similarity search query
             search_sql = text(f"""
-                SELECT 
-                    id,
-                    document_id,
-                    fund_id,
-                    content,
-                    metadata,
-                    1 - (embedding <=> :query_embedding::vector) as similarity_score
-                FROM document_embeddings
-                {where_clause}
-                ORDER BY embedding <=> :query_embedding::vector
-                LIMIT :k
+                WITH ranked_results AS (
+                    SELECT 
+                        id,
+                        document_id,
+                        fund_id,
+                        content,
+                        metadata,
+                        1 - (embedding <=> CAST(:query_embedding AS vector)) as similarity_score,
+                        ROW_NUMBER() OVER (
+                            ORDER BY embedding <=> CAST(:query_embedding AS vector)
+                        ) as rank
+                    FROM document_embeddings
+                    {where_clause}
+                )
+                SELECT *
+                FROM ranked_results
+                WHERE rank <= :k
+                ORDER BY similarity_score DESC
             """)
             
             result = self.db.execute(search_sql, {
                 "query_embedding": str(embedding_list),
-                "k": k
+                "k": k,
+                "min_score": min_score,
             })
             
             # Format results

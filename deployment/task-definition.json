@@ -1,0 +1,128 @@
+{
+    "family": "fund-analysis",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": ["FARGATE"],
+    "cpu": "1024",
+    "memory": "2048",
+    "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/ecsTaskExecutionRole",
+    "taskRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/ecsTaskRole",
+    "containerDefinitions": [
+        {
+            "name": "backend",
+            "image": "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}",
+            "essential": true,
+            "portMappings": [
+                {
+                    "containerPort": 8000,
+                    "protocol": "tcp",
+                    "appProtocol": "http"
+                }
+            ],
+            "environment": [
+                {
+                    "name": "ENVIRONMENT",
+                    "value": "${ENVIRONMENT}"
+                }
+            ],
+            "secrets": [
+                {
+                    "name": "DATABASE_URL",
+                    "valueFrom": "arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter/fund-analysis/${ENVIRONMENT}/database_url"
+                },
+                {
+                    "name": "REDIS_URL",
+                    "valueFrom": "arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter/fund-analysis/${ENVIRONMENT}/redis_url"
+                },
+                {
+                    "name": "OPENAI_API_KEY",
+                    "valueFrom": "arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter/fund-analysis/${ENVIRONMENT}/openai_api_key"
+                }
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/fund-analysis",
+                    "awslogs-region": "${AWS_REGION}",
+                    "awslogs-stream-prefix": "backend",
+                    "awslogs-create-group": "true"
+                }
+            },
+            "healthCheck": {
+                "command": [
+                    "CMD-SHELL",
+                    "curl -f http://localhost:8000/api/health || exit 1"
+                ],
+                "interval": 30,
+                "timeout": 5,
+                "retries": 3,
+                "startPeriod": 60
+            },
+            "ulimits": [
+                {
+                    "name": "nofile",
+                    "softLimit": 65536,
+                    "hardLimit": 65536
+                }
+            ],
+            "linuxParameters": {
+                "initProcessEnabled": true
+            }
+        },
+        {
+            "name": "celery",
+            "image": "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}",
+            "essential": true,
+            "command": ["celery", "-A", "app.worker", "worker", "--loglevel=info"],
+            "environment": [
+                {
+                    "name": "ENVIRONMENT",
+                    "value": "${ENVIRONMENT}"
+                }
+            ],
+            "secrets": [
+                {
+                    "name": "DATABASE_URL",
+                    "valueFrom": "arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter/fund-analysis/${ENVIRONMENT}/database_url"
+                },
+                {
+                    "name": "REDIS_URL",
+                    "valueFrom": "arn:aws:ssm:${AWS_REGION}:${AWS_ACCOUNT_ID}:parameter/fund-analysis/${ENVIRONMENT}/redis_url"
+                }
+            ],
+            "logConfiguration": {
+                "logDriver": "awslogs",
+                "options": {
+                    "awslogs-group": "/ecs/fund-analysis",
+                    "awslogs-region": "${AWS_REGION}",
+                    "awslogs-stream-prefix": "celery",
+                    "awslogs-create-group": "true"
+                }
+            },
+            "ulimits": [
+                {
+                    "name": "nofile",
+                    "softLimit": 65536,
+                    "hardLimit": 65536
+                }
+            ],
+            "linuxParameters": {
+                "initProcessEnabled": true
+            }
+        }
+    ],
+    "volumes": [],
+    "tags": [
+        {
+            "key": "Environment",
+            "value": "${ENVIRONMENT}"
+        },
+        {
+            "key": "Project",
+            "value": "fund-analysis"
+        },
+        {
+            "key": "ManagedBy",
+            "value": "ECS"
+        }
+    ]
+}

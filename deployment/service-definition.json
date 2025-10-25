@@ -1,0 +1,59 @@
+{
+    "cluster": "${ECS_CLUSTER}",
+    "serviceName": "fund-analysis",
+    "taskDefinition": "${TASK_DEFINITION_ARN}",
+    "desiredCount": 2,
+    "launchType": "FARGATE",
+    "platformVersion": "LATEST",
+    "propagateTags": "SERVICE",
+    "deploymentConfiguration": {
+        "maximumPercent": 200,
+        "minimumHealthyPercent": 100,
+        "deploymentCircuitBreaker": {
+            "enable": true,
+            "rollback": true
+        }
+    },
+    "networkConfiguration": {
+        "awsvpcConfiguration": {
+            "subnets": ["${SUBNET_ID_1}", "${SUBNET_ID_2}"],
+            "securityGroups": ["${SECURITY_GROUP_ID}"],
+            "assignPublicIp": "ENABLED"
+        }
+    },
+    "loadBalancers": [
+        {
+            "targetGroupArn": "${TARGET_GROUP_ARN}",
+            "containerName": "backend",
+            "containerPort": 8000
+        }
+    ],
+    "healthCheckGracePeriodSeconds": 120,
+    "serviceRegistries": [
+        {
+            "registryArn": "${SERVICE_DISCOVERY_ARN}",
+            "containerName": "backend",
+            "containerPort": 8000
+        }
+    ],
+    "enableECSManagedTags": true,
+    "enableExecuteCommand": true,
+    "schedulingStrategy": "REPLICA",
+    "deploymentController": {
+        "type": "ECS"
+    },
+    "tags": [
+        {
+            "key": "Environment",
+            "value": "${ENVIRONMENT}"
+        },
+        {
+            "key": "Project",
+            "value": "fund-analysis"
+        },
+        {
+            "key": "ManagedBy",
+            "value": "ECS"
+        }
+    ]
+}

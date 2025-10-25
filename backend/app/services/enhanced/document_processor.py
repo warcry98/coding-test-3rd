@@ -1,22 +1,46 @@
-from typing import Dict, List, Any
-import logging
+"""
+Document processor service with intelligent chunking and extraction
+"""
 import re
-import pdfplumber
+import json
+import logging
+from typing import Dict, List, Any, Optional
 from datetime import datetime
+from pathlib import Path
+
+import pdfplumber
+
 from app.core.config import settings
 from app.services.table_parser import TableParser
 from app.services.vector_store import VectorStore
+from app.models.transaction import CapitalCall, Distribution, Adjustment
 
 logger = logging.getLogger(__name__)
 
 class DocumentProcessor:
-    """Process PDF documents and extract structured data"""
+    """Process PDF documents with intelligent data extraction and validation"""
     
     def __init__(self):
         self.table_parser = TableParser()
         self.vector_store = VectorStore()
-        self.max_chunk_size = 1000
-        self.min_chunk_size = 50
+        
+        # Text chunking config
+        self.min_chunk_size = settings.MIN_CHUNK_SIZE
+        self.max_chunk_size = settings.MAX_CHUNK_SIZE
+        self.overlap_size = settings.CHUNK_OVERLAP
+        
+        # PDF processing settings
+        self.table_confidence_threshold = settings.TABLE_CONFIDENCE_THRESHOLD
+        self.pdf_table_settings = settings.PDF_TABLE_SETTINGS
+        
+        # Track statistics
+        self.stats = {
+            'tables_processed': 0,
+            'tables_valid': 0,
+            'tables_invalid': 0,
+            'text_chunks': 0,
+            'embedding_errors': 0
+        }
     
     async def process_document(
             self, 
@@ -25,7 +49,7 @@ class DocumentProcessor:
             fund_id: int
     ) -> Dict[str, Any]:
         """
-        Process a PDF document with comprehensive parsing and validation
+        Process a PDF document with comprehensive error handling
         
         Features:
         - Table detection and classification
@@ -41,7 +65,10 @@ class DocumentProcessor:
         Returns:
             Processing results and statistics
         """
+        # Reset statistics
+        self.stats = {k: 0 for k in self.stats}
         start_time = datetime.now()
+        
         result = {
             "status": "pending",
             "error": "",
@@ -50,6 +77,7 @@ class DocumentProcessor:
             "page_processed": 0,
             "tables_extracted": 0,
             "text_chunks": 0,
+            "parsed_tables": [],
             "invalid_tables": [],
             "warnings": []
         }
@@ -57,7 +85,6 @@ class DocumentProcessor:
         try:
             all_text_blocks = []
             classified_tables = []
-            table_confidence_threshold = 0.7  # Min confidence for table classification
 
             # Process PDF
             with pdfplumber.open(file_path) as pdf:
@@ -65,12 +92,9 @@ class DocumentProcessor:
                     logger.info(f"Processing page {page_idx}/{len(pdf.pages)}")
                     
                     # Extract and process tables
-                    tables = page.extract_tables(table_settings={
-                        'vertical_strategy': 'text',
-                        'horizontal_strategy': 'text',
-                        'intersection_x_tolerance': 2,
-                        'intersection_y_tolerance': 2
-                    })
+                    tables = page.extract_tables(
+                        table_settings=self.pdf_table_settings
+                    )
                     
                     for table_idx, table in enumerate(tables, start=1):
                         try:
@@ -81,26 +105,36 @@ class DocumentProcessor:
                                 # Classify with confidence score
                                 table_type, confidence = self.table_parser.classify(parsed_data)
                                 
-                                if confidence >= table_confidence_threshold:
-                                    classified_tables.append({
-                                        "page": page_idx,
-                                        "table_index": table_idx,
-                                        "type": table_type,
-                                        "confidence": confidence,
-                                        "data": parsed_data
-                                    })
+                                if confidence >= self.table_confidence_threshold:
+                                    # Validate parsed data
+                                    is_valid, errors = self.table_parser.validate_parsed_data(
+                                        parsed_data, table_type
+                                    )
+                                    
+                                    if is_valid:
+                                        classified_tables.append({
+                                            "page": page_idx,
+                                            "table_index": table_idx,
+                                            "type": table_type,
+                                            "confidence": confidence,
+                                            "data": parsed_data
+                                        })
+                                        self.stats['tables_valid'] += 1
+                                    else:
+                                        result["invalid_tables"].append({
+                                            "page": page_idx,
+                                            "table_index": table_idx,
+                                            "errors": errors,
+                                            "data": parsed_data
+                                        })
+                                        self.stats['tables_invalid'] += 1
                                 else:
-                                    result["invalid_tables"].append({
-                                        "page": page_idx,
-                                        "table_index": table_idx,
-                                        "confidence": confidence,
-                                        "data": parsed_data
-                                    })
                                     result["warnings"].append(
                                         f"Low confidence table classification on page {page_idx}"
                                     )
                                     
                             result["tables_extracted"] += 1
+                            self.stats['tables_processed'] += 1
                             
                         except Exception as e:
                             logger.error(f"Error processing table: {e}")
@@ -122,8 +156,9 @@ class DocumentProcessor:
             # Process text blocks
             chunks = self._chunk_text(all_text_blocks)
             result["text_chunks"] = len(chunks)
+            self.stats['text_chunks'] = len(chunks)
             
-            # Store in vector database
+            # Store chunks in vector database
             try:
                 for chunk in chunks:
                     await self.vector_store.add_document(
@@ -136,6 +171,7 @@ class DocumentProcessor:
                     )
             except Exception as e:
                 logger.error(f"Error storing vectors: {e}")
+                self.stats['embedding_errors'] += 1
                 result["warnings"].append(f"Vector storage error: {str(e)}")
 
             processing_time = (datetime.now() - start_time).total_seconds()
@@ -143,23 +179,25 @@ class DocumentProcessor:
                 "status": "completed",
                 "processing_time": round(processing_time, 2),
                 "tables_found": len(classified_tables),
-                "invalid_tables": len(result["invalid_tables"])
+                "invalid_tables": len(result["invalid_tables"]),
+                "stats": self.stats
             })
             
             logger.info(f"✅ Document {document_id} processed successfully")
 
         except Exception as e:
-            logger.exception(f"Error processing document {document_id}: {e}")
+            logger.exception(f"Error processing document {document_id}")
             result.update({
                 "status": "failed",
-                "error": str(e)
+                "error": str(e),
+                "stats": self.stats
             })
 
         return result
     
-    def _chunk_text(self, text_content: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _chunk_text(self, text_blocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
-        Chunk text content using intelligent semantic splitting
+        Chunk text using intelligent semantic splitting
         
         Features:
         - Semantic boundary preservation
@@ -168,14 +206,14 @@ class DocumentProcessor:
         - Metadata enrichment
         
         Args:
-            text_content: List of text content with metadata
+            text_blocks: List of text blocks with metadata
             
         Returns:
             List of text chunks with metadata
         """
         chunks = []
         
-        for block in text_content:
+        for block in text_blocks:
             page = block.get("page")
             content = block.get("content", "").strip()
             
@@ -229,7 +267,7 @@ class DocumentProcessor:
                         ))
         
         return chunks
-    
+        
     def _create_chunk_metadata(
         self,
         text: str,

@@ -4,7 +4,7 @@ Query engine service for RAG-based question answering
 from typing import Dict, Any, List, Optional
 import time
 from langchain_openai import ChatOpenAI
-from langchain_community.llms import Ollama
+from langchain_community.chat_models.ollama import ChatOllama
 from langchain.prompts import ChatPromptTemplate
 from app.core.config import settings
 from app.services.vector_store import VectorStore
@@ -23,16 +23,18 @@ class QueryEngine:
     
     def _initialize_llm(self):
         """Initialize LLM"""
-        if settings.OPENAI_API_KEY:
+        if settings.LLM_PROVIDER == "ollama":
+            return ChatOllama(
+                model=settings.OLLAMA_MODEL,
+                base_url=settings.OLLAMA_BASE_URL,
+            )
+        elif settings.OPENAI_API_KEY:
             return ChatOpenAI(
                 model=settings.OPENAI_MODEL,
-                temperature=0,
+                temperature=0.1,
                 openai_api_key=settings.OPENAI_API_KEY
             )
-        else:
-            # Fallback to local LLM
-            return Ollama(model="llama2")
-    
+        
     async def process_query(
         self, 
         query: str, 
